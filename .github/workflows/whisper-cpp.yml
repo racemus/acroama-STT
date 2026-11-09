@@ -1,0 +1,93 @@
+name: whisper-cpp
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: whisper-cpp
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  whisper-cpp:
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: "1. Read the latest whisper.cpp release"
+        id: latest
+        run: |
+          tag="$(gh release view --repo ggml-org/whisper.cpp --json tagName -q .tagName)"
+          [[ -n "$tag" ]] || { echo "no release tag of whisper.cpp" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: "2. Compare with manifest.json"
+        id: compare
+        env:
+          VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          current="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["modules"].get("whisper-cpp", {}).get("version", ""))' manifest.json)"
+          echo "manifest has '$current', latest is '$VERSION'"
+          if [[ "$current" == "$VERSION" ]]; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "3. Build whisper-cli"
+        if: steps.compare.outputs.new == 'true'
+        id: build
+        env:
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          scripts/build-whisper-cli.sh "$TAG" out/ | tee build.log
+          echo "sha256=$(sed -n 's/^sha256=//p' build.log)" >> "$GITHUB_OUTPUT"
+          echo "size=$(sed -n 's/^size=//p' build.log)" >> "$GITHUB_OUTPUT"
+
+      - name: "4. Publish the release and add it to manifest.json"
+        if: steps.compare.outputs.new == 'true'
+        env:
+          TAG: ${{ steps.latest.outputs.tag }}
+          VERSION: ${{ steps.latest.outputs.version }}
+          SHA256: ${{ steps.build.outputs.sha256 }}
+          SIZE: ${{ steps.build.outputs.size }}
+        run: |
+          release="whisper-cpp-$VERSION"
+          # A run that published the release but failed before the commit leaves it behind; rebuild replaces it.
+          if gh release view "$release" >/dev/null 2>&1; then
+            gh release delete "$release" --yes --cleanup-tag
+          fi
+          gh release create "$release" out/whisper-cli --title "whisper-cli $VERSION" --notes "whisper-cli built from whisper.cpp $TAG for Apple Silicon, macOS 11.0 or later."
+          python3 scripts/update_manifest.py manifest.json \
+            --module whisper-cpp \
+            --version "$VERSION" \
+            --target aarch64-apple-darwin \
+            --url "https://github.com/$GITHUB_REPOSITORY/releases/download/whisper-cpp-$VERSION/whisper-cli" \
+            --sha256 "$SHA256" \
+            --size "$SIZE"
+
+      - name: "5. Record the check, commit manifest.json and publish it"
+        run: |
+          python3 scripts/update_manifest.py manifest.json --checked-only
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "manifest: checked $(date -u +%Y-%m-%d)"
+          git push
+          if ! gh release view manifest >/dev/null 2>&1; then
+            gh release create manifest --title "Module list" --notes "manifest.json read by the app; updated by the daily workflow."
+          fi
+          gh release upload manifest manifest.json --clobber
