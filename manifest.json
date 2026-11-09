@@ -1,5 +1,16 @@
 {
   "version": 1,
-  "checkedAt": null,
-  "modules": {}
+  "checkedAt": "2026-11-09T13:22:41Z",
+  "modules": {
+    "whisper-cpp": {
+      "version": "1.9.5",
+      "builds": {
+        "aarch64-apple-darwin": {
+          "url": "https://github.com/racemus/acroama-STT/releases/download/whisper-cpp-1.9.5/whisper-cli",
+          "sha256": "e5ac7b44156dc68cfc58821eeb4848c4379d66439ec93845cde6533abef6a8ec",
+          "size": 8003280
+        }
+      }
+    }
+  }
 }
