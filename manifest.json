@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "checkedAt": "2026-11-20T11:51:09Z",
+  "checkedAt": "2026-11-21T11:17:55Z",
   "modules": {
     "whisper-cpp": {
       "version": "1.9.5",
